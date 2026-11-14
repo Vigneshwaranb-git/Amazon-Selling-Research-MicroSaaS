@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { AxiosError, type AxiosResponse } from 'axios'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LoginForm } from '@/components/auth/LoginForm'
@@ -18,6 +19,17 @@ const register = vi.fn<(p: RegisterArgs) => Promise<void>>()
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ login, register }),
 }))
+
+const resendVerification = vi.fn<(email: string) => Promise<string>>()
+vi.mock('@/services/authService', () => ({
+  resendVerification: (e: string) => resendVerification(e),
+  getGoogleLoginUrl: () => '/google',
+}))
+
+function apiError(status: number, code: string): AxiosError {
+  const response = { status, data: { error: { code, message: 'x' } } } as AxiosResponse
+  return new AxiosError('fail', String(status), undefined, null, response)
+}
 
 const wrap = (ui: ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>)
 
@@ -51,6 +63,30 @@ describe('LoginForm', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Login failed')
   })
+
+  it('offers to resend the verification email when the email is not verified', async () => {
+    login.mockRejectedValue(apiError(403, 'EMAIL_NOT_VERIFIED'))
+    resendVerification.mockResolvedValue('sent')
+    wrap(<LoginForm />)
+    await userEvent.type(screen.getByLabelText('Email'), 'a@b.com')
+    await userEvent.type(screen.getByLabelText('Password'), 'secret123')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not verified/i)
+    await userEvent.click(screen.getByRole('button', { name: /resend verification email/i }))
+    expect(resendVerification).toHaveBeenCalledWith('a@b.com')
+    expect(await screen.findByText(/new email is on its way/i)).toBeInTheDocument()
+  })
+
+  it('shows a friendly message when resending is rate limited', async () => {
+    login.mockRejectedValue(apiError(403, 'EMAIL_NOT_VERIFIED'))
+    resendVerification.mockRejectedValue(apiError(429, 'RATE_LIMITED'))
+    wrap(<LoginForm />)
+    await userEvent.type(screen.getByLabelText('Email'), 'a@b.com')
+    await userEvent.type(screen.getByLabelText('Password'), 'secret123')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    await userEvent.click(await screen.findByRole('button', { name: /resend verification email/i }))
+    expect(await screen.findByText(/too many requests/i)).toBeInTheDocument()
+  })
 })
 
 describe('RegisterForm', () => {
@@ -81,5 +117,7 @@ describe('RegisterForm', () => {
     await waitFor(() =>
       expect(register).toHaveBeenCalledWith({ email: 'jane@x.com', password: 'password123', full_name: 'Jane' }),
     )
+    expect(await screen.findByText('Check your email to verify your account')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /resend verification email/i })).toBeInTheDocument()
   })
 })

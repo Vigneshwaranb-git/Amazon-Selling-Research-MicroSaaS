@@ -1,6 +1,7 @@
 """JWT creation/verification and bcrypt password hashing."""
 
 import hashlib
+import hmac
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -16,7 +17,9 @@ logger = logging.getLogger(__name__)
 ACCESS = "access"
 REFRESH = "refresh"
 RESET = "reset"
+EMAIL_VERIFY = "email_verify"
 RESET_TOKEN_EXPIRE_MINUTES = 30
+EMAIL_VERIFY_TOKEN_EXPIRE_HOURS = 24
 # Pinned: never derived from config or from the token header.
 JWT_ALGORITHM = "HS256"
 
@@ -34,13 +37,20 @@ def verify_password(plain: str, hashed: str | None) -> bool:
         return False
 
 
-def _encode(data: dict[str, Any], token_type: str, expires: timedelta) -> str:
-    now = datetime.now(UTC)
+def _encode(
+    data: dict[str, Any],
+    token_type: str,
+    expires: timedelta,
+    *,
+    now: datetime | None = None,
+    jti: str | None = None,
+) -> str:
+    now = now or datetime.now(UTC)
     payload = {
         **data,
         "exp": now + expires,
         "iat": now,
-        "jti": uuid.uuid4().hex,
+        "jti": jti or uuid.uuid4().hex,
         "type": token_type,
     }
     return str(jwt.encode(payload, settings.SECRET_KEY, algorithm=JWT_ALGORITHM))
@@ -55,6 +65,35 @@ def create_access_token(user_id: int) -> str:
 def create_refresh_token(user_id: int) -> str:
     return _encode(
         {"sub": str(user_id)}, REFRESH, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    )
+
+
+def create_rotated_refresh_token(user_id: int, previous_token: str, rotated_at: datetime) -> str:
+    """Deterministic successor of ``previous_token`` (same input -> same string).
+
+    Lets a replay of a just-rotated token (multi-tab race) be answered with the
+    already-issued successor without ever storing raw refresh tokens.
+    """
+    digest = hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        b"rotate:" + hash_token(previous_token).encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+    return _encode(
+        {"sub": str(user_id)},
+        REFRESH,
+        timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        now=rotated_at,
+        jti=digest[:32],
+    )
+
+
+def create_email_verify_token(user_id: int, email: str) -> str:
+    """Single-purpose token bound to the user id and the exact email address."""
+    return _encode(
+        {"sub": str(user_id), "email": email.lower()},
+        EMAIL_VERIFY,
+        timedelta(hours=EMAIL_VERIFY_TOKEN_EXPIRE_HOURS),
     )
 
 

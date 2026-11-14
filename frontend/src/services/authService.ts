@@ -1,5 +1,5 @@
-import api, { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '@/services/api'
-import type { TokenPair, User } from '@/types'
+import api, { setAccessToken } from '@/services/api'
+import type { AccessToken, User } from '@/types'
 
 export interface RegisterPayload {
   email: string
@@ -14,31 +14,26 @@ export interface UpdateProfilePayload {
   password?: string
 }
 
+interface MessageResponse {
+  message: string
+}
+
 const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-
-export function storeTokens(tokens: Pick<TokenPair, 'access_token' | 'refresh_token'>): void {
-  localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token)
-  localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token)
-}
-
-export function clearTokens(): void {
-  localStorage.removeItem(ACCESS_TOKEN_KEY)
-  localStorage.removeItem(REFRESH_TOKEN_KEY)
-}
 
 export function getGoogleLoginUrl(): string {
   return `${API_URL}/api/v1/auth/google`
 }
 
-export async function login(email: string, password: string): Promise<TokenPair> {
+/** Signs in; the refresh cookie is set by the server and the access token is kept in memory. */
+export async function login(email: string, password: string): Promise<void> {
   const form = new URLSearchParams()
   form.append('username', email)
   form.append('password', password)
-  const { data } = await api.post<TokenPair>('/auth/login', form)
-  storeTokens(data)
-  return data
+  const { data } = await api.post<AccessToken>('/auth/login', form)
+  setAccessToken(data.access_token)
 }
 
+/** Creates an unverified account. The user must verify their email before signing in. */
 export async function register(payload: RegisterPayload): Promise<User> {
   const { data } = await api.post<User>('/auth/register', payload)
   return data
@@ -46,11 +41,11 @@ export async function register(payload: RegisterPayload): Promise<User> {
 
 export async function logout(): Promise<void> {
   try {
-    await api.post('/auth/logout', { refresh_token: localStorage.getItem(REFRESH_TOKEN_KEY) })
+    await api.post('/auth/logout')
   } catch {
-    // Token revocation is best effort; the local session is cleared regardless.
+    // Revocation is best effort; the local session is cleared regardless.
   } finally {
-    clearTokens()
+    setAccessToken(null)
   }
 }
 
@@ -59,14 +54,9 @@ export async function getMe(): Promise<User> {
   return data
 }
 
-type ProfileUpdateResponse = User & { tokens?: Pick<TokenPair, 'access_token' | 'refresh_token'> | null }
-
 export async function updateMe(payload: UpdateProfilePayload): Promise<User> {
-  const { data } = await api.put<ProfileUpdateResponse>('/auth/me', payload)
-  const { tokens, ...user } = data
-  // A password change revokes every refresh token; the API returns a fresh pair for this session.
-  if (tokens) storeTokens(tokens)
-  return user
+  const { data } = await api.put<User>('/auth/me', payload)
+  return data
 }
 
 export async function forgotPassword(email: string): Promise<void> {
@@ -75,4 +65,14 @@ export async function forgotPassword(email: string): Promise<void> {
 
 export async function resetPassword(token: string, newPassword: string): Promise<void> {
   await api.post('/auth/reset-password', { token, new_password: newPassword })
+}
+
+export async function verifyEmail(token: string): Promise<string> {
+  const { data } = await api.post<MessageResponse>('/auth/verify-email', { token })
+  return data.message
+}
+
+export async function resendVerification(email: string): Promise<string> {
+  const { data } = await api.post<MessageResponse>('/auth/resend-verification', { email })
+  return data.message
 }

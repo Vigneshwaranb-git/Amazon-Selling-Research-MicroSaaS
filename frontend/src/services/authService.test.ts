@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import api from '@/services/api'
-import { updateMe } from '@/services/authService'
+import api, { getAccessToken, setAccessToken } from '@/services/api'
+import { login, logout, resendVerification, updateMe, verifyEmail } from '@/services/authService'
 
-vi.mock('@/services/api', () => ({
-  default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
-  ACCESS_TOKEN_KEY: 'access_token',
-  REFRESH_TOKEN_KEY: 'refresh_token',
-}))
+vi.mock('@/services/api', () => {
+  let token: string | null = null
+  return {
+    default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
+    getAccessToken: () => token,
+    setAccessToken: (t: string | null) => {
+      token = t
+    },
+  }
+})
 const mocked = vi.mocked(api)
 
 const user = {
@@ -19,31 +24,39 @@ const user = {
 }
 
 beforeEach(() => {
-  mocked.put.mockReset()
+  vi.clearAllMocks()
+  setAccessToken(null)
   localStorage.clear()
 })
 
-describe('updateMe', () => {
-  it('stores the fresh token pair returned after a password change', async () => {
-    localStorage.setItem('refresh_token', 'old-refresh')
-    mocked.put.mockResolvedValue({
-      data: { ...user, tokens: { access_token: 'new-access', refresh_token: 'new-refresh' } },
-    })
-
-    const result = await updateMe({ current_password: 'old', password: 'new-password-1' })
-
-    expect(localStorage.getItem('access_token')).toBe('new-access')
-    expect(localStorage.getItem('refresh_token')).toBe('new-refresh')
-    expect(result).toEqual(user)
-    expect(result).not.toHaveProperty('tokens')
+describe('authService', () => {
+  it('login keeps the access token in memory and never in storage', async () => {
+    mocked.post.mockResolvedValue({ data: { access_token: 'acc', token_type: 'bearer' } })
+    await login('a@b.co', 'pw')
+    expect(getAccessToken()).toBe('acc')
+    expect(localStorage.length).toBe(0)
+    expect(sessionStorage.length).toBe(0)
   })
 
-  it('leaves stored tokens alone when no tokens are returned', async () => {
-    localStorage.setItem('refresh_token', 'keep-me')
-    mocked.put.mockResolvedValue({ data: { ...user, tokens: null } })
+  it('logout posts without a body and clears the token even on failure', async () => {
+    setAccessToken('acc')
+    mocked.post.mockRejectedValue(new Error('network'))
+    await logout()
+    expect(mocked.post).toHaveBeenCalledWith('/auth/logout')
+    expect(getAccessToken()).toBeNull()
+  })
 
-    await updateMe({ full_name: 'Ada' })
+  it('updateMe returns the plain user', async () => {
+    mocked.put.mockResolvedValue({ data: user })
+    expect(await updateMe({ full_name: 'Ada' })).toEqual(user)
+    expect(localStorage.length).toBe(0)
+  })
 
-    expect(localStorage.getItem('refresh_token')).toBe('keep-me')
+  it('verifyEmail and resendVerification post to the right endpoints', async () => {
+    mocked.post.mockResolvedValue({ data: { message: 'ok' } })
+    expect(await verifyEmail('tok')).toBe('ok')
+    expect(mocked.post).toHaveBeenCalledWith('/auth/verify-email', { token: 'tok' })
+    expect(await resendVerification('a@b.co')).toBe('ok')
+    expect(mocked.post).toHaveBeenCalledWith('/auth/resend-verification', { email: 'a@b.co' })
   })
 })

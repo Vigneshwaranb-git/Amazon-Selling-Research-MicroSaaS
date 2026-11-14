@@ -36,6 +36,18 @@ class ForbiddenError(AppException):
         super().__init__(message, "FORBIDDEN", 403)
 
 
+class EmailNotVerifiedError(AppException):
+    def __init__(self) -> None:
+        super().__init__(
+            "Please verify your email address before signing in", "EMAIL_NOT_VERIFIED", 403
+        )
+
+
+class InvalidTokenError(AppException):
+    def __init__(self, message: str = "Invalid or expired token") -> None:
+        super().__init__(message, "INVALID_TOKEN", 400)
+
+
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
     return JSONResponse(

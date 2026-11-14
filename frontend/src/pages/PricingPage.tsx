@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { PageWrapper } from '@/components/layout/PageWrapper'
+import { PublicHeader } from '@/components/layout/PublicHeader'
 import { MeshBackground } from '@/components/layout/MeshBackground'
 import { PlanCard, type PlanDefinition } from '@/components/billing/PlanCard'
 import { useSubscription } from '@/hooks/useSubscription'
@@ -43,6 +44,7 @@ export default function PricingPage() {
   return (
     <PageWrapper>
       <MeshBackground />
+      <PublicHeader />
       <main className="mx-auto max-w-5xl p-8">
         <h1 className="text-center text-3xl font-bold">Pricing</h1>
         <p className="mt-2 text-center text-sm text-muted-foreground">Placeholder pricing, to be confirmed.</p>

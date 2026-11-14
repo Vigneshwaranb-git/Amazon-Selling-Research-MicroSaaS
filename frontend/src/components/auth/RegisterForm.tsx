@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { GradientButton } from '@/components/ui/GradientButton'
 import { FormError, FormField } from '@/components/auth/FormField'
 import { validateEmail, validatePassword } from '@/components/auth/validation'
 import { GoogleLoginButton } from '@/components/auth/GoogleLoginButton'
 import { useAuth } from '@/hooks/useAuth'
+import { ResendVerification } from '@/components/auth/ResendVerification'
 import { getErrorMessage } from '@/lib/errors'
 
 interface RegisterErrors {
@@ -16,7 +17,6 @@ interface RegisterErrors {
 
 export function RegisterForm() {
   const { register } = useAuth()
-  const navigate = useNavigate()
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -24,6 +24,7 @@ export function RegisterForm() {
   const [errors, setErrors] = useState<RegisterErrors>({})
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [registeredEmail, setRegisteredEmail] = useState<string | null>(null)
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -39,12 +40,29 @@ export function RegisterForm() {
     setSubmitting(true)
     try {
       await register({ email: email.trim(), password, full_name: fullName.trim() })
-      navigate('/dashboard', { replace: true })
+      setRegisteredEmail(email.trim())
     } catch (err) {
       setFormError(getErrorMessage(err, 'Registration failed. Please try again.'))
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (registeredEmail) {
+    return (
+      <div className="space-y-4 text-center" role="status">
+        <h2 className="text-lg font-semibold">Check your email to verify your account</h2>
+        <p className="text-sm">
+          We sent a verification link to <strong>{registeredEmail}</strong>. Verify your email, then sign in.
+        </p>
+        <div className="flex justify-center">
+          <ResendVerification email={registeredEmail} />
+        </div>
+        <Link to="/login" className="text-sm underline">
+          Back to sign in
+        </Link>
+      </div>
+    )
   }
 
   return (

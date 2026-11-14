@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ACCESS_TOKEN_KEY } from '@/services/api'
+import { refreshSession } from '@/services/api'
 import * as authService from '@/services/authService'
 import type { RegisterPayload, UpdateProfilePayload } from '@/services/authService'
 import type { User } from '@/types'
@@ -21,15 +21,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true)
 
   useEffect(() => {
-    if (!localStorage.getItem(ACCESS_TOKEN_KEY)) {
-      setIsLoading(false)
-      return
+    // Restore the session from the HttpOnly refresh cookie; a 401 just means "logged out".
+    let cancelled = false
+    refreshSession()
+      .then(() => authService.getMe())
+      .then((me) => {
+        if (!cancelled) setUser(me)
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
-    authService
-      .getMe()
-      .then(setUser)
-      .catch(() => setUser(null))
-      .finally(() => setIsLoading(false))
   }, [])
 
   const refreshUser = useCallback(async () => {
@@ -43,8 +50,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(async (payload: RegisterPayload) => {
     await authService.register(payload)
-    await authService.login(payload.email, payload.password)
-    setUser(await authService.getMe())
   }, [])
 
   const logout = useCallback(async () => {

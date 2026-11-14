@@ -32,6 +32,9 @@ class User(Base, TimestampMixin):
     is_admin: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    notify_bsr_alerts: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
     oauth_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(

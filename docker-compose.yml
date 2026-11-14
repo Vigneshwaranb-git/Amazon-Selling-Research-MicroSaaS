@@ -16,7 +16,7 @@ services:
   backend:
     build: ./backend
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
-    environment:
+    environment: &backend-env
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-amzscoutiq}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
       ALGORITHM: ${ALGORITHM:-HS256}
@@ -26,6 +26,9 @@ services:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost:3000","http://localhost:5173"]}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # Dev compose serves plain http://localhost: the Secure cookie flag must be off here.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       DODO_API_KEY: ${DODO_API_KEY:-}
@@ -36,13 +39,43 @@ services:
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-AmzScoutIQ <no-reply@amzscoutiq.local>}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      ALERT_BSR_CHANGE_PCT: ${ALERT_BSR_CHANGE_PCT:-20}
+      WORKER_INTERVAL_MINUTES: ${WORKER_INTERVAL_MINUTES:-360}
       AMAZON_DATA_API_KEY: ${AMAZON_DATA_API_KEY:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      DATA_PROVIDER: ${DATA_PROVIDER:-mock}
+      # Fixed container path (the host path is chosen by DATASET_HOST_DIR below).
+      DATASET_PATH: /app/data/amazon_reviews_2023.sqlite
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads_data:/app/uploads
+      # Read-only dataset mount. DATASET_HOST_DIR unset -> empty named volume (never fails and
+      # never creates a root-owned ./data). Set DATASET_HOST_DIR=./data to use your import.
+      - ${DATASET_HOST_DIR:-dataset_empty}:/app/data:ro
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "8000:8000"
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    volumes:
+      - ${DATASET_HOST_DIR:-dataset_empty}:/app/data:ro
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -58,3 +91,5 @@ services:
 
 volumes:
   postgres_data:
+  uploads_data:
+  dataset_empty:

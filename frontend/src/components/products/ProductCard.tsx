@@ -37,7 +37,12 @@ export function ProductCard({ product }: ProductCardProps) {
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Monthly sales</dt>
-          <dd>{fmt(product.estimated_monthly_sales)}</dd>
+          <dd>
+            {fmt(product.estimated_monthly_sales)}
+            {product.estimated_monthly_sales != null && (
+              <span className="ml-1 text-xs text-muted-foreground">Est.</span>
+            )}
+          </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Margin</dt>

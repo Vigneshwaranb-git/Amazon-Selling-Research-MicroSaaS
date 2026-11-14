@@ -36,3 +36,15 @@ export function getErrorMessage(error: unknown, fallback: string = DEFAULT_ERROR
   }
   return fallback
 }
+
+/** The machine-readable `{error: {code}}` from an API error, or null. */
+export function getErrorCode(error: unknown): string | null {
+  if (!axios.isAxiosError(error)) return null
+  const data: unknown = error.response?.data
+  if (!isRecord(data) || !isRecord(data.error)) return null
+  return nonEmpty(data.error.code)
+}
+
+export function getErrorStatus(error: unknown): number | null {
+  return axios.isAxiosError(error) ? (error.response?.status ?? null) : null
+}

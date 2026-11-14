@@ -39,23 +39,18 @@ class UserResponse(BaseModel):
 
 
 class TokenResponse(BaseModel):
+    """Body of login/refresh. The refresh token travels only in an HttpOnly cookie."""
+
     access_token: str
-    refresh_token: str
     token_type: str = "bearer"
 
 
-class ProfileUpdateResponse(UserResponse):
-    """PUT /auth/me response; carries fresh tokens when the password changed."""
-
-    tokens: TokenResponse | None = None
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=2048)
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str
-
-
-class LogoutRequest(BaseModel):
-    refresh_token: str
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
 
 
 class ForgotPasswordRequest(BaseModel):

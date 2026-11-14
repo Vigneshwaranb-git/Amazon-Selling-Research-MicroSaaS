@@ -5,6 +5,8 @@ from collections.abc import Generator
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+# TestClient talks plain http: Secure cookies would never be sent back.
+os.environ.setdefault("COOKIE_SECURE", "false")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

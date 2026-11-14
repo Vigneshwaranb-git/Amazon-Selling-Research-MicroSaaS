@@ -35,8 +35,10 @@ def apply_product_data(product: Product, data: ProductData) -> None:
     product.estimated_monthly_revenue = (data.price * data.monthly_sales_estimate).quantize(
         Decimal("0.01")
     )
-    product.saturation_score = saturation_score(
-        data.review_count, data.rating, data.seller_count, data.bsr
+    product.saturation_score = (
+        data.saturation_score
+        if data.saturation_score is not None
+        else saturation_score(data.review_count, data.rating, data.seller_count, data.bsr)
     )
 
 
@@ -80,7 +82,11 @@ async def backfill_history(db: Session, product: Product, provider: ProductDataP
                 product_id=product.id,
                 bsr=p.bsr,
                 price=p.price,
-                estimated_sales=estimate_monthly_sales(p.bsr),
+                estimated_sales=(
+                    p.estimated_sales
+                    if p.estimated_sales is not None
+                    else estimate_monthly_sales(p.bsr)
+                ),
                 rating=product.rating,
                 review_count=product.review_count,
                 captured_at=datetime.combine(p.day, time.min, tzinfo=UTC),
@@ -103,9 +109,13 @@ async def upsert_product(db: Session, provider: ProductDataProvider, asin: str) 
     db.flush()
     if created:
         await backfill_history(db, product, provider)
-    append_snapshot(db, product)
+    if provider.supports_live_snapshots:
+        append_snapshot(db, product)
     db.flush()
-    recompute_trend(db, product)
+    if data.trend_score is not None:
+        product.trend_score = data.trend_score  # provider-computed from real fields
+    else:
+        recompute_trend(db, product)
     db.commit()
     db.refresh(product)
     return product
@@ -119,6 +129,13 @@ async def run_snapshot_job(
     Returns the number of products refreshed. A failure for one ASIN is logged
     and does not stop the job.
     """
+    if not provider.supports_live_snapshots:
+        logger.info(
+            "Snapshot job skipped: %s serves a static dataset, so new snapshots would only "
+            "repeat the same values (no fabricated time series)",
+            type(provider).__name__,
+        )
+        return 0
     stmt = select(Product.asin)
     if asins is not None:
         stmt = stmt.where(Product.asin.in_(asins))

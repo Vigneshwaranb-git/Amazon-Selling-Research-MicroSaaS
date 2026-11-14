@@ -35,3 +35,14 @@ describe('ProductCard', () => {
     expect(screen.getByRole('link')).toHaveAttribute('href', '/products/B000TEST01')
   })
 })
+
+describe('ProductCard estimated label', () => {
+  it('marks monthly sales as an estimate', () => {
+    render(
+      <MemoryRouter>
+        <ProductCard product={product} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Est.')).toBeInTheDocument()
+  })
+})

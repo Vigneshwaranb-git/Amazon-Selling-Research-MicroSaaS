@@ -1,12 +1,13 @@
-import type { ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider } from '@/context/AuthContext'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
+import { AppLayout } from '@/components/layout/AppLayout'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import AuthCallbackPage from '@/pages/AuthCallbackPage'
 import ForgotPasswordPage from '@/pages/ForgotPasswordPage'
 import ResetPasswordPage from '@/pages/ResetPasswordPage'
+import VerifyEmailPage from '@/pages/VerifyEmailPage'
 import ProfilePage from '@/pages/ProfilePage'
 import DashboardPage from '@/pages/DashboardPage'
 import ProductDetailPage from '@/pages/ProductDetailPage'
@@ -22,36 +23,61 @@ import AdminDashboardPage from '@/pages/AdminDashboardPage'
 import AdminUsersPage from '@/pages/AdminUsersPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 
-const guard = (el: ReactNode, adminOnly = false) => (
-  <ProtectedRoute adminOnly={adminOnly}>{el}</ProtectedRoute>
-)
+export function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/pricing" element={<PricingPage />} />
+      <Route
+        element={
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/products/:asin" element={<ProductDetailPage />} />
+        <Route path="/tracking-lists" element={<TrackingListsPage />} />
+        <Route path="/calculator" element={<CalculatorPage />} />
+        <Route path="/calculator/saved" element={<SavedScenariosPage />} />
+        <Route path="/settings/billing" element={<BillingPage />} />
+        <Route path="/reviews/:asin" element={<ReviewsPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute adminOnly>
+              <AdminDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute adminOnly>
+              <AdminUsersPage />
+            </ProtectedRoute>
+          }
+        />
+      </Route>
+      <Route path="*" element={<NotFoundPage />} />
+    </Routes>
+  )
+}
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/auth/callback" element={<AuthCallbackPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
-          <Route path="/pricing" element={<PricingPage />} />
-          <Route path="/profile" element={guard(<ProfilePage />)} />
-          <Route path="/dashboard" element={guard(<DashboardPage />)} />
-          <Route path="/products/:asin" element={guard(<ProductDetailPage />)} />
-          <Route path="/tracking-lists" element={guard(<TrackingListsPage />)} />
-          <Route path="/calculator" element={guard(<CalculatorPage />)} />
-          <Route path="/calculator/saved" element={guard(<SavedScenariosPage />)} />
-          <Route path="/settings/billing" element={guard(<BillingPage />)} />
-          <Route path="/reviews/:asin" element={guard(<ReviewsPage />)} />
-          <Route path="/analytics" element={guard(<AnalyticsPage />)} />
-          <Route path="/settings" element={guard(<SettingsPage />)} />
-          <Route path="/admin" element={guard(<AdminDashboardPage />, true)} />
-          <Route path="/admin/users" element={guard(<AdminUsersPage />, true)} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
+        <AppRoutes />
       </BrowserRouter>
     </AuthProvider>
   )

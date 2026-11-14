@@ -3,11 +3,11 @@ import { Link, useNavigate } from 'react-router-dom'
 import { AuthPageLayout } from '@/components/auth/AuthPageLayout'
 import { FormError } from '@/components/auth/FormField'
 import { useAuth } from '@/hooks/useAuth'
-import { storeTokens } from '@/services/authService'
+import { refreshSession } from '@/services/api'
 
 /**
- * Landing page for the Google OAuth redirect. The backend sends the tokens in the URL
- * fragment (`#access_token=...&refresh_token=...`) so they never reach a server or log.
+ * Landing page for the Google OAuth redirect. The backend has already set the HttpOnly refresh
+ * cookie, so no tokens travel in the URL: we exchange the cookie for an access token and load the user.
  */
 export default function AuthCallbackPage() {
   const { refreshUser } = useAuth()
@@ -15,21 +15,18 @@ export default function AuthCallbackPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-    const accessToken = params.get('access_token')
-    const refreshToken = params.get('refresh_token')
-
-    // Remove the tokens from the address bar and history straight away.
-    window.history.replaceState(null, '', window.location.pathname)
-
-    if (!accessToken || !refreshToken) {
-      setError('Google sign-in failed. Please try again.')
-      return
+    let cancelled = false
+    refreshSession()
+      .then(() => refreshUser())
+      .then(() => {
+        if (!cancelled) navigate('/dashboard', { replace: true })
+      })
+      .catch(() => {
+        if (!cancelled) setError('Google sign-in failed. Please try again.')
+      })
+    return () => {
+      cancelled = true
     }
-    storeTokens({ access_token: accessToken, refresh_token: refreshToken })
-    refreshUser()
-      .then(() => navigate('/dashboard', { replace: true }))
-      .catch(() => setError('Google sign-in failed. Please try again.'))
   }, [refreshUser, navigate])
 
   return (

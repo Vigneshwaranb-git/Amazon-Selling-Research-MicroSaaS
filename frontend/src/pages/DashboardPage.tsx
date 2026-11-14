@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { PageWrapper } from '@/components/layout/PageWrapper'
+import { ExportCsvButton } from '@/components/products/ExportCsvButton'
 import { FilterBar } from '@/components/products/FilterBar'
 import { ProductFeed } from '@/components/products/ProductFeed'
 import { useProducts } from '@/hooks/useProducts'
@@ -13,6 +14,7 @@ export default function DashboardPage() {
       <main className="mx-auto max-w-6xl space-y-6 p-8">
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <FilterBar filters={filters} onChange={setFilters} />
+        <ExportCsvButton filters={filters} />
         <ProductFeed
           data={data}
           loading={loading}

@@ -17,6 +17,9 @@ from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.rate_limit import limiter
 from app.services import auth_service
+from tests._auth_helpers import cookie_token, refresh, register_verified, session
+from tests._auth_helpers import login as _login_raw
+from tests._auth_helpers import logout as _logout
 
 PREFIX = settings.API_V1_PREFIX + "/auth"
 EMAIL = "seller@example.com"
@@ -24,15 +27,11 @@ PASSWORD = "S3curePass!"
 
 
 def _register(client: TestClient, email: str = EMAIL) -> dict[str, Any]:
-    resp = client.post(
-        f"{PREFIX}/register", json={"email": email, "password": PASSWORD, "full_name": "Seller"}
-    )
-    assert resp.status_code == 201, resp.text
-    return dict(resp.json())
+    return register_verified(client, email, PASSWORD)
 
 
 def _login(client: TestClient, email: str = EMAIL, password: str = PASSWORD) -> Any:
-    return client.post(f"{PREFIX}/login", data={"username": email, "password": password})
+    return _login_raw(client, email, password)
 
 
 def _auth(tokens: dict[str, Any]) -> dict[str, str]:
@@ -40,8 +39,12 @@ def _auth(tokens: dict[str, Any]) -> dict[str, str]:
 
 
 def test_register_and_duplicate(client: TestClient, db_session: Session) -> None:
-    body = _register(client, "Seller@Example.com")
-    assert body["email"] == EMAIL
+    resp = client.post(
+        f"{PREFIX}/register", json={"email": "Seller@Example.com", "password": PASSWORD}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["email"] == EMAIL and body["is_verified"] is False
     assert "hashed_password" not in body
     user = db_session.query(User).one()
     assert user.hashed_password != PASSWORD
@@ -74,7 +77,7 @@ def test_login_success_and_failure(client: TestClient) -> None:
 
 def test_me_get_put(client: TestClient) -> None:
     _register(client)
-    tokens = _login(client).json()
+    tokens = session(client, EMAIL)
     me = client.get(f"{PREFIX}/me", headers=_auth(tokens))
     assert me.status_code == 200 and me.json()["email"] == EMAIL
     upd = client.put(f"{PREFIX}/me", json={"full_name": "New Name"}, headers=_auth(tokens))
@@ -85,7 +88,8 @@ def test_me_get_put(client: TestClient) -> None:
         headers=_auth(tokens),
     )
     assert pw.status_code == 200
-    assert pw.json()["tokens"]["refresh_token"]
+    assert "tokens" not in pw.json() and "refresh_token" not in pw.text
+    assert cookie_token(pw)
     assert _login(client, password="BrandNewPass1").status_code == 200
     assert _login(client).status_code == 401
 
@@ -94,7 +98,7 @@ def test_me_requires_valid_access_token(client: TestClient) -> None:
     assert client.get(f"{PREFIX}/me").status_code == 401
     assert client.get(f"{PREFIX}/me", headers={"Authorization": "Bearer junk"}).status_code == 401
     _register(client)
-    tokens = _login(client).json()
+    tokens = session(client, EMAIL)
     # refresh token must not work as an access token
     bad = {"Authorization": f"Bearer {tokens['refresh_token']}"}
     assert client.get(f"{PREFIX}/me", headers=bad).status_code == 401
@@ -102,7 +106,7 @@ def test_me_requires_valid_access_token(client: TestClient) -> None:
 
 def test_inactive_user_rejected(client: TestClient, db_session: Session) -> None:
     _register(client)
-    tokens = _login(client).json()
+    tokens = session(client, EMAIL)
     user = db_session.query(User).one()
     user.is_active = False
     db_session.commit()
@@ -110,54 +114,46 @@ def test_inactive_user_rejected(client: TestClient, db_session: Session) -> None
     assert _login(client).status_code == 401
 
 
-def test_refresh_rotation_and_reuse_detection(client: TestClient, db_session: Session) -> None:
+def test_refresh_rotation_and_reuse_detection(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(auth_service, "ROTATION_GRACE_SECONDS", 0)
     _register(client)
-    first = _login(client).json()
-    resp = client.post(f"{PREFIX}/refresh", json={"refresh_token": first["refresh_token"]})
+    first = session(client, EMAIL)
+    resp = refresh(client, first["refresh_token"])
     assert resp.status_code == 200
-    second = resp.json()
-    assert second["refresh_token"] != first["refresh_token"]
+    assert set(resp.json()) == {"access_token", "token_type"}
+    second = cookie_token(resp)
+    assert second and second != first["refresh_token"]
     # raw tokens are not stored
     stored = {t.token for t in db_session.query(RefreshToken).all()}
     assert first["refresh_token"] not in stored
-    # old token reuse -> 401 and whole family revoked
-    reuse = client.post(f"{PREFIX}/refresh", json={"refresh_token": first["refresh_token"]})
-    assert reuse.status_code == 401
-    again = client.post(f"{PREFIX}/refresh", json={"refresh_token": second["refresh_token"]})
-    assert again.status_code == 401
+    # old token reuse (outside the grace window) -> 401 and whole family revoked
+    assert refresh(client, first["refresh_token"]).status_code == 401
+    assert refresh(client, second).status_code == 401
 
 
 def test_refresh_rejects_garbage_and_access_token(client: TestClient) -> None:
     _register(client)
-    tokens = _login(client).json()
-    assert client.post(f"{PREFIX}/refresh", json={"refresh_token": "nope"}).status_code == 401
-    assert (
-        client.post(f"{PREFIX}/refresh", json={"refresh_token": tokens["access_token"]}).status_code
-        == 401
-    )
+    tokens = session(client, EMAIL)
+    assert refresh(client, "nope").status_code == 401
+    assert refresh(client, tokens["access_token"]).status_code == 401
 
 
 def test_logout_revokes_refresh_token(client: TestClient) -> None:
     _register(client)
-    tokens = _login(client).json()
-    out = client.post(f"{PREFIX}/logout", json={"refresh_token": tokens["refresh_token"]})
+    tokens = session(client, EMAIL)
+    out = _logout(client, tokens["refresh_token"])
     assert out.status_code == 200
-    assert (
-        client.post(
-            f"{PREFIX}/refresh", json={"refresh_token": tokens["refresh_token"]}
-        ).status_code
-        == 401
-    )
-    # logout is idempotent
-    assert (
-        client.post(f"{PREFIX}/logout", json={"refresh_token": tokens["refresh_token"]}).status_code
-        == 200
-    )
+    assert refresh(client, tokens["refresh_token"]).status_code == 401
+    # logout is idempotent, also without any cookie
+    assert _logout(client, tokens["refresh_token"]).status_code == 200
+    assert _logout(client, None).status_code == 200
 
 
 def test_password_reset_flow(client: TestClient, db_session: Session) -> None:
     _register(client)
-    tokens = _login(client).json()
+    tokens = session(client, EMAIL)
     # unknown email gives the same response
     unknown = client.post(f"{PREFIX}/forgot-password", json={"email": "ghost@example.com"})
     known = client.post(f"{PREFIX}/forgot-password", json={"email": EMAIL})
@@ -173,12 +169,7 @@ def test_password_reset_flow(client: TestClient, db_session: Session) -> None:
     assert _login(client, password="ResetPass123").status_code == 200
     assert _login(client).status_code == 401
     # existing sessions revoked, token single-use
-    assert (
-        client.post(
-            f"{PREFIX}/refresh", json={"refresh_token": tokens["refresh_token"]}
-        ).status_code
-        == 401
-    )
+    assert refresh(client, tokens["refresh_token"]).status_code == 401
     again = client.post(
         f"{PREFIX}/reset-password", json={"token": token, "new_password": "AnotherPass123"}
     )
@@ -187,7 +178,7 @@ def test_password_reset_flow(client: TestClient, db_session: Session) -> None:
 
 def test_reset_password_rejects_wrong_token_type(client: TestClient) -> None:
     _register(client)
-    tokens = _login(client).json()
+    tokens = session(client, EMAIL)
     resp = client.post(
         f"{PREFIX}/reset-password",
         json={"token": tokens["access_token"], "new_password": "ResetPass123"},
@@ -223,7 +214,7 @@ def test_admin_dependency(client: TestClient, db_session: Session) -> None:
     probe.dependency_overrides[get_db] = app.dependency_overrides[get_db]
     pc = TestClient(probe)
     _register(client)
-    tokens = _login(client).json()
+    tokens = session(client, EMAIL)
     assert pc.get("/probe", headers=_auth(tokens)).status_code == 403
     user = db_session.query(User).one()
     user.is_admin = True
@@ -260,7 +251,8 @@ def test_google_flow(
         f"{PREFIX}/google/callback", params={"code": "x", "state": state}, follow_redirects=False
     )
     assert ok.status_code in (302, 307)
-    assert "#access_token=" in ok.headers["location"]
+    assert ok.headers["location"] == f"{settings.FRONTEND_URL}/auth/callback"
+    assert cookie_token(ok)
     user = db_session.query(User).one()
     assert user.email == "g@example.com"
     assert user.oauth_provider == "google" and user.is_verified
@@ -292,7 +284,7 @@ def test_service_get_or_create_existing_user(db_session: Session) -> None:
 
 def test_password_change_requires_current_password(client: TestClient) -> None:
     _register(client)
-    tokens = _login(client).json()
+    tokens = session(client, EMAIL)
     h = _auth(tokens)
     missing = client.put(f"{PREFIX}/me", json={"password": "BrandNewPass1"}, headers=h)
     assert missing.status_code == 422
@@ -305,21 +297,23 @@ def test_password_change_requires_current_password(client: TestClient) -> None:
     assert _login(client).status_code == 200  # password unchanged
 
 
-def test_password_change_revokes_refresh_tokens(client: TestClient) -> None:
+def test_password_change_revokes_refresh_tokens(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(auth_service, "ROTATION_GRACE_SECONDS", 0)
     _register(client)
-    old = _login(client).json()
-    other = _login(client).json()  # a second session
+    old = session(client, EMAIL)
+    other = session(client, EMAIL)  # a second session
     resp = client.put(
         f"{PREFIX}/me",
         json={"current_password": PASSWORD, "password": "BrandNewPass1"},
         headers=_auth(old),
     )
     assert resp.status_code == 200
-    new_tokens = resp.json()["tokens"]
-    # the session that changed the password keeps working via the fresh pair
-    ok = client.post(f"{PREFIX}/refresh", json={"refresh_token": new_tokens["refresh_token"]})
-    assert ok.status_code == 200
+    new_refresh = cookie_token(resp)
+    assert new_refresh
+    # the session that changed the password keeps working via the fresh cookie
+    assert refresh(client, new_refresh).status_code == 200
     # old sessions are revoked (checked last: reuse of a revoked token revokes everything)
     for stale in (old, other):
-        r = client.post(f"{PREFIX}/refresh", json={"refresh_token": stale["refresh_token"]})
-        assert r.status_code == 401
+        assert refresh(client, stale["refresh_token"]).status_code == 401

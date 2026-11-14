@@ -1,11 +1,12 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AuthCallbackPage from '@/pages/AuthCallbackPage'
-import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '@/services/api'
 
 const refreshUser = vi.fn<() => Promise<void>>()
+const refreshSession = vi.fn<() => Promise<string>>()
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ refreshUser }) }))
+vi.mock('@/services/api', () => ({ refreshSession: () => refreshSession() }))
 
 function renderPage() {
   return render(
@@ -19,70 +20,36 @@ function renderPage() {
   )
 }
 
-function setHash(hash: string) {
-  window.history.replaceState(null, '', `/auth/callback${hash}`)
-}
-
 beforeEach(() => {
   localStorage.clear()
   refreshUser.mockReset()
-})
-afterEach(() => {
-  window.history.replaceState(null, '', '/')
+  refreshSession.mockReset()
 })
 
 describe('AuthCallbackPage', () => {
-  it('stores tokens from the fragment, clears the hash, and goes to the dashboard', async () => {
+  it('bootstraps the session from the cookie then goes to the dashboard', async () => {
+    refreshSession.mockResolvedValue('tok')
     refreshUser.mockResolvedValue()
-    setHash('#access_token=acc.123&refresh_token=ref.456')
     renderPage()
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument()
-    expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe('acc.123')
-    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('ref.456')
-    expect(window.location.hash).toBe('')
-    expect(window.location.href).not.toContain('acc.123')
+    expect(refreshSession).toHaveBeenCalledTimes(1)
     expect(refreshUser).toHaveBeenCalledTimes(1)
+    expect(localStorage.length).toBe(0)
   })
 
-  it('clears the hash immediately even before the user loads', async () => {
-    refreshUser.mockReturnValue(new Promise(() => {}))
-    setHash('#access_token=a&refresh_token=b')
-    renderPage()
-    await waitFor(() => expect(window.location.hash).toBe(''))
-    expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe('a')
-  })
-
-  it.each([
-    ['no fragment', ''],
-    ['missing refresh token', '#access_token=a'],
-    ['missing access token', '#refresh_token=b'],
-    ['empty values', '#access_token=&refresh_token='],
-    ['error fragment', '#error=access_denied'],
-  ])('shows an error and stores nothing when %s', async (_name, hash) => {
-    setHash(hash)
+  it('shows an error when the refresh fails', async () => {
+    refreshSession.mockRejectedValue(new Error('401'))
     renderPage()
     expect(await screen.findByText(/Google sign-in failed/i)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /back to sign in/i })).toHaveAttribute('href', '/login')
-    expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull()
-    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull()
     expect(refreshUser).not.toHaveBeenCalled()
-    expect(window.location.hash).toBe('')
   })
 
   it('shows an error when loading the user fails', async () => {
-    refreshUser.mockImplementation(async () => { throw new Error('401') })
-    setHash('#access_token=a&refresh_token=b')
+    refreshSession.mockResolvedValue('tok')
+    refreshUser.mockRejectedValue(new Error('401'))
     renderPage()
     expect(await screen.findByText(/Google sign-in failed/i)).toBeInTheDocument()
     expect(screen.queryByText('DASHBOARD')).not.toBeInTheDocument()
-  })
-
-  it('decodes url-encoded token values', async () => {
-    refreshUser.mockResolvedValue()
-    setHash('#access_token=a%2Bb&refresh_token=c%3Dd')
-    renderPage()
-    await screen.findByText('DASHBOARD')
-    expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe('a+b')
-    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('c=d')
   })
 })

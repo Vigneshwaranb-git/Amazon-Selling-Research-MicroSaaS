@@ -19,6 +19,9 @@ from app.models.refresh_token import RefreshToken
 from app.models.subscription import Subscription
 from app.models.user import User
 from app.services import auth_service, billing_service
+from tests._auth_helpers import cookie_token, register_and_login, session
+from tests._auth_helpers import logout as logout_call
+from tests._auth_helpers import refresh as refresh_call
 
 AUTH = settings.API_V1_PREFIX + "/auth"
 API = settings.API_V1_PREFIX
@@ -206,24 +209,27 @@ def test_webhook_sub_id_stays_bound_to_original_user(bdb: Session) -> None:
 
 # ------------------------------------------------------------------- auth edge
 def _reg(client: TestClient, email: str = "s@example.com") -> dict[str, Any]:
-    r = client.post(f"{AUTH}/register", json={"email": email, "password": PW, "full_name": "S"})
-    assert r.status_code == 201
-    return _login(client, email)
+    return register_and_login(client, email, PW)
 
 
 def _login(client: TestClient, email: str = "s@example.com") -> dict[str, Any]:
-    r = client.post(f"{AUTH}/login", data={"username": email, "password": PW})
-    return dict(r.json())
+    return dict(session(client, email, PW))
 
 
 def _refresh(client: TestClient, token: str) -> Any:
-    return client.post(f"{AUTH}/refresh", json={"refresh_token": token})
+    return refresh_call(client, token)
+
+
+@pytest.fixture(autouse=True)
+def _no_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests exercise strict reuse detection; the grace window has its own tests."""
+    monkeypatch.setattr(auth_service, "ROTATION_GRACE_SECONDS", 0)
 
 
 def test_reuse_revokes_all_sessions_across_devices(client: TestClient, db_session: Session) -> None:
     device1 = _reg(client)
     device2 = _login(client)
-    rotated = _refresh(client, device1["refresh_token"]).json()
+    rotated = {"refresh_token": cookie_token(_refresh(client, device1["refresh_token"]))}
     assert _refresh(client, device1["refresh_token"]).status_code == 401  # replay
     assert _refresh(client, device2["refresh_token"]).status_code == 401  # untouched device dead
     assert _refresh(client, rotated["refresh_token"]).status_code == 401
@@ -277,7 +283,7 @@ def test_refresh_for_deactivated_user_rejected(client: TestClient, db_session: S
 
 
 def test_logout_with_garbage_token_is_ok(client: TestClient) -> None:
-    assert client.post(f"{AUTH}/logout", json={"refresh_token": "junk"}).status_code == 200
+    assert logout_call(client, "junk").status_code == 200
 
 
 def test_me_rejects_bad_bearers(client: TestClient) -> None:
@@ -373,7 +379,7 @@ def test_forgot_password_logging(
     monkeypatch.setattr(settings, "DEBUG", True)
     with caplog.at_level("DEBUG"):
         auth_service.send_password_reset(db_session, "i@x.co")
-    assert "reset-password?token" in caplog.text
+    assert "reset-password?token" not in caplog.text  # link is never logged, even in DEBUG
 
 
 def test_google_user_paths(db_session: Session) -> None:

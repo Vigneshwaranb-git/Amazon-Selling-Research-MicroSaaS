@@ -9,3 +9,4 @@ venv/
 htmlcov/
 tests/
 .env
+data/

@@ -28,3 +28,11 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+
+# Open dataset SQLite files (licence-restricted: never commit or redistribute)
+/data/
+backend/data/
+
+# Uploaded files
+uploads/
+backend/uploads/

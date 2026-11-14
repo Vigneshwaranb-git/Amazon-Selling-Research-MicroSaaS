@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import Select, func, select
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 SEED_KEYWORDS = ["kitchen organizer", "yoga mat", "dog toy", "board game", "water bottle"]
 SEED_PER_KEYWORD = 6
+SEED_TOP_N = 50  # providers that expose a ranked list (dataset) seed their top-N by BSR
 EXPORT_MAX_ROWS = 5000
 
 SORT_COLUMNS: dict[str, Any] = {
@@ -51,6 +53,13 @@ def attach_margin(product: Product) -> Product:
 
 async def seed_products(db: Session, provider: ProductDataProvider) -> int:
     count = 0
+    asins = await provider.seed_asins(SEED_TOP_N)
+    if asins is not None:
+        for asin in asins:
+            if await upsert_product(db, provider, asin) is not None:
+                count += 1
+        logger.info("Seeded %d products from the provider's top list", count)
+        return count
     for kw in SEED_KEYWORDS:
         for item in await provider.search_products(kw, limit=SEED_PER_KEYWORD):
             if await upsert_product(db, provider, item.asin) is not None:
@@ -142,8 +151,16 @@ def get_history(db: Session, product: Product, limit: int) -> list[BsrSnapshot]:
 
 
 def _csv_safe(value: object) -> str:
-    """Neutralise spreadsheet formula injection."""
-    text = "" if value is None else str(value)
+    """Neutralise spreadsheet formula injection in string cells.
+
+    Real numbers (e.g. a negative margin) are exported as-is; only text that
+    starts with a formula trigger character gets an apostrophe prefix.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, int | float | Decimal) and not isinstance(value, bool):
+        return str(value)
+    text = str(value)
     if text and text[0] in "=+-@\t\r":
         return "'" + text
     return text

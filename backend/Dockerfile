@@ -19,6 +19,8 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=appuser:appuser ./app ./app
 COPY --chown=appuser:appuser alembic.ini ./alembic.ini
 COPY --chown=appuser:appuser ./alembic ./alembic
+# Named volumes inherit this ownership on first mount, so appuser can write avatars.
+RUN mkdir -p /app/uploads && chown appuser:appuser /app/uploads
 USER appuser
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
