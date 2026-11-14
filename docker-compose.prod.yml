@@ -1,0 +1,45 @@
+# Production overlay: serves the app on https://${APP_DOMAIN} through an existing Traefik
+# (docker provider, entrypoint `websecure`, ACME resolver `letsencrypt`).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#   (or set COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml in .env and run `docker compose up -d --build`)
+#
+# Required in .env: APP_DOMAIN, VITE_API_URL=https://${APP_DOMAIN}, FRONTEND_URL, ALLOWED_ORIGINS, COOKIE_SECURE=true.
+# One hostname serves both parts: /api, /docs, /openapi.json and /health go to the backend, everything
+# else to the frontend, so the browser talks to a single origin (no CORS, first-party cookies).
+#
+# Host ports 3000/8000 are NOT published here: all traffic must come through Traefik over HTTPS.
+
+services:
+  backend:
+    # Same as the base command plus proxy headers, so rate limits and logs see the real client IP
+    # (X-Forwarded-For from Traefik) instead of the proxy's address. The backend is only reachable
+    # through Traefik because its host port is unpublished.
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
+    ports: !reset []
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.amzscoutiq-api.rule=Host(`${APP_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/docs`) || Path(`/openapi.json`) || Path(`/health`))
+      - traefik.http.routers.amzscoutiq-api.entrypoints=websecure
+      - traefik.http.routers.amzscoutiq-api.tls.certresolver=letsencrypt
+      - traefik.http.routers.amzscoutiq-api.priority=100
+      - traefik.http.routers.amzscoutiq-api.middlewares=amzscoutiq-sec
+      - traefik.http.services.amzscoutiq-api.loadbalancer.server.port=8000
+      - traefik.http.middlewares.amzscoutiq-sec.headers.stsSeconds=31536000
+      - traefik.http.middlewares.amzscoutiq-sec.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.amzscoutiq-sec.headers.frameDeny=true
+      - traefik.http.middlewares.amzscoutiq-sec.headers.referrerPolicy=strict-origin-when-cross-origin
+
+  frontend:
+    ports: !reset []
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.amzscoutiq-web.rule=Host(`${APP_DOMAIN}`)
+      - traefik.http.routers.amzscoutiq-web.entrypoints=websecure
+      - traefik.http.routers.amzscoutiq-web.tls.certresolver=letsencrypt
+      - traefik.http.routers.amzscoutiq-web.priority=1
+      - traefik.http.routers.amzscoutiq-web.middlewares=amzscoutiq-sec
+      - traefik.http.services.amzscoutiq-web.loadbalancer.server.port=80
